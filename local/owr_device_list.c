@@ -131,7 +131,7 @@ static gboolean enumerate_audio_source_devices(GClosure *callback)
 
     source = _owr_local_media_source_new_cached(-1,
         "Default audio input", OWR_MEDIA_TYPE_AUDIO, OWR_SOURCE_TYPE_CAPTURE,
-        NULL);
+        NULL, OWR_MEDIA_SOURCE_SUPPORTS_NONE);
     sources = g_list_prepend(sources, source);
     _owr_utils_call_closure_with_list(callback, sources);
     g_list_free_full(sources, g_object_unref);
@@ -177,7 +177,8 @@ static gboolean enumerate_source_devices(OwrMediaType type, GClosure *callback)
         source = _owr_local_media_source_new_cached(-1,
                 name, type,
                 OWR_SOURCE_TYPE_CAPTURE,
-                device);
+                device,
+                OWR_MEDIA_SOURCE_SUPPORTS_NONE);
         g_free(name);
         sources = g_list_prepend(sources, source);
     }
@@ -486,11 +487,13 @@ static gboolean enumerate_video_source_devices(GClosure *callback)
 
         if (facing == CameraInfo.CAMERA_FACING_FRONT) {
             source = _owr_local_media_source_new_cached(i, "Front facing Camera",
-                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE, NULL);
+                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE, NULL,
+                OWR_MEDIA_SOURCE_SUPPORTS_NONE);
             sources = g_list_prepend(sources, source);
         } else if (facing == CameraInfo.CAMERA_FACING_BACK) {
             source = _owr_local_media_source_new_cached(i, "Back facing Camera",
-                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE, NULL);
+                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE, NULL,
+                OWR_MEDIA_SOURCE_SUPPORTS_NONE);
             sources = g_list_append(sources, source);
         }
 

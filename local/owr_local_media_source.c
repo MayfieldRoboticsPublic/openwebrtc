@@ -571,7 +571,9 @@ static void on_caps(GstElement *source, GParamSpec *pspec, OwrMediaSource *media
     if (GST_IS_CAPS(caps)) {
         GST_INFO_OBJECT(source, "%s - configured with caps: %" GST_PTR_FORMAT,
             media_source_name, caps);
+        gst_caps_unref(caps);
     }
+    g_free(media_source_name);
 }
 
 static void
@@ -924,7 +926,8 @@ done:
 }
 
 static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device)
+    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device,
+    OwrMediaSourceSupportedInterfaces interfaces)
 {
     OwrLocalMediaSource *source;
 
@@ -936,12 +939,14 @@ static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const
     source->priv->device = device;
 
     _owr_media_source_set_type(OWR_MEDIA_SOURCE(source), source_type);
+    _owr_media_source_set_supported_interfaces(OWR_MEDIA_SOURCE(source), interfaces);
 
     return source;
 }
 
 OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device)
+    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device,
+    OwrMediaSourceSupportedInterfaces interfaces)
 {
     static OwrLocalMediaSource *test_sources[2] = { NULL, };
     static GHashTable *sources[2] = { NULL, };
@@ -962,7 +967,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
 
     if (source_type == OWR_SOURCE_TYPE_TEST) {
         if (!test_sources[i])
-            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type, device);
+            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type, device, interfaces);
 
         ret = test_sources[i];
 
@@ -982,7 +987,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
         }
 
         if (!ret) {
-            ret = _owr_local_media_source_new(device_index, name, media_type, source_type, device);
+            ret = _owr_local_media_source_new(device_index, name, media_type, source_type, device, interfaces);
             g_hash_table_insert(sources[i], GINT_TO_POINTER(device_index), ret);
         }
 
