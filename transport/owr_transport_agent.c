@@ -1678,8 +1678,9 @@ static void prepare_transport_bin_send_elements(OwrTransportAgent *transport_age
     } else {
         GSList *sessions = get_sessions_from_stream_id(transport_agent, stream_id);
         guint previous_session_id = 0;
+        GSList *walk;
         // Look for the session for which the global encoder was created.
-        for (GSList *walk = sessions; walk && previous_session_id == 0; walk = g_slist_next(walk)) {
+        for (walk = sessions; walk && previous_session_id == 0; walk = g_slist_next(walk)) {
             OwrMediaSession *current = OWR_MEDIA_SESSION(walk->data);
             guint current_session_id;
 
@@ -2001,6 +2002,7 @@ static gboolean emit_new_candidate(GHashTable *args)
     gchar *ufrag = NULL, *password = NULL;
     gboolean got_credentials;
     GSList *sessions;
+    GSList *walk;
 
     transport_agent = OWR_TRANSPORT_AGENT(g_hash_table_lookup(args, "transport_agent"));
     g_return_val_if_fail(OWR_IS_TRANSPORT_AGENT(transport_agent), FALSE);
@@ -2010,7 +2012,7 @@ static gboolean emit_new_candidate(GHashTable *args)
     g_return_val_if_fail(nice_candidate, FALSE);
 
     sessions = get_sessions_from_stream_id(transport_agent, nice_candidate->stream_id);
-    for (GSList *walk = sessions; walk; walk = g_slist_next(walk)) {
+    for (walk = sessions; walk; walk = g_slist_next(walk)) {
         OwrSession *session = OWR_SESSION(walk->data);
         if (!nice_candidate->username || !nice_candidate->password) {
             got_credentials = nice_agent_get_local_credentials(priv->nice_agent,
@@ -2070,12 +2072,13 @@ static gboolean emit_candidate_gathering_done(GHashTable *args)
     guint stream_id;
     int i;
     GSList *sessions;
+    GSList *walk;
 
     transport_agent = g_hash_table_lookup(args, "transport-agent");
     stream_id = GPOINTER_TO_UINT(g_hash_table_lookup(args, "stream-id"));
 
     sessions = get_sessions_from_stream_id(transport_agent, stream_id);
-    for (GSList *walk = sessions; walk; walk = g_slist_next(walk)) {
+    for (walk = sessions; walk; walk = g_slist_next(walk)) {
         session = OWR_SESSION(walk->data);
 
         g_signal_emit_by_name(session, "on-candidate-gathering-done", NULL);
@@ -2130,6 +2133,7 @@ static gboolean emit_ice_state_changed(GHashTable *args)
     OwrComponentType component_type;
     OwrIceState state;
     GSList *sessions;
+    GSList *walk;
 
     transport_agent = g_hash_table_lookup(args, "transport-agent");
     stream_id = GPOINTER_TO_UINT(g_hash_table_lookup(args, "stream-id"));
@@ -2137,7 +2141,7 @@ static gboolean emit_ice_state_changed(GHashTable *args)
     state = GPOINTER_TO_UINT(g_hash_table_lookup(args, "ice-state"));
 
     sessions = get_sessions_from_stream_id(transport_agent, stream_id);
-    for (GSList *walk = sessions; walk; walk = g_slist_next(walk)) {
+    for (walk = sessions; walk; walk = g_slist_next(walk)) {
         OwrSession *session = OWR_SESSION(walk->data);
 
         _owr_session_emit_ice_state_changed(session, stream_id, component_type, state);
@@ -2172,6 +2176,7 @@ static void on_new_selected_pair(NiceAgent *nice_agent,
     OwrTransportAgent *transport_agent)
 {
     GSList *sessions;
+    GSList *walk;
 
     OWR_UNUSED(nice_agent);
     OWR_UNUSED(lcandidate);
@@ -2180,7 +2185,7 @@ static void on_new_selected_pair(NiceAgent *nice_agent,
     g_return_if_fail(OWR_IS_TRANSPORT_AGENT(transport_agent));
 
     sessions = get_sessions_from_stream_id(transport_agent, stream_id);
-    for (GSList *walk = sessions; walk; walk = g_slist_next(walk)) {
+    for (walk = sessions; walk; walk = g_slist_next(walk)) {
         OwrSession *session = OWR_SESSION(walk->data);
         guint session_id = get_session_id(transport_agent, session);
         PendingSessionInfo *pending_session_info;
@@ -3094,8 +3099,9 @@ static GstElement * on_rtpbin_request_aux_receiver(G_GNUC_UNUSED GstElement *rtp
     g_object_unref(media_session);
 
     if ((transport_agent->priv->bundle_policy == OWR_BUNDLE_POLICY_TYPE_MAX_BUNDLE) && !pt_map) {
+        GSList* walk;
         GST_DEBUG("no valid pt_map found, looking for one in the staged sessions");
-        for (GSList* walk = transport_agent->priv->unstarted_sessions; walk; walk = g_slist_next(walk)) {
+        for (walk = transport_agent->priv->unstarted_sessions; walk; walk = g_slist_next(walk)) {
             OwrSession* session = OWR_SESSION(walk->data);
             if (!OWR_IS_MEDIA_SESSION(session))
                 continue;
@@ -4496,9 +4502,12 @@ static gboolean dump_bin(gpointer data)
 
 void owr_transport_agent_start(OwrTransportAgent *agent)
 {
+    GSList *walk;
+
     if (!agent->priv->unstarted_sessions)
         return;
-    for (GSList *walk = agent->priv->unstarted_sessions; walk; walk = g_slist_next(walk)) {
+
+    for (walk = agent->priv->unstarted_sessions; walk; walk = g_slist_next(walk)) {
         GHashTable *args;
         args = _owr_create_schedule_table(OWR_MESSAGE_ORIGIN(agent));
         g_hash_table_insert(args, "transport_agent", agent);
@@ -4636,7 +4645,8 @@ static GstPadProbeReturn probe_rtp_info(GstPad *srcpad, GstPadProbeInfo *info, S
             rx_payload = _owr_media_session_get_receive_payload(media_session, pt);
         } else {
             GSList *sessions = get_sessions_from_stream_id(transport_agent, stream_id);
-            for (GSList *walk = sessions; walk; walk = g_slist_next(walk)) {
+            GSList *walk;
+            for (walk = sessions; walk; walk = g_slist_next(walk)) {
                 media_session = OWR_MEDIA_SESSION(walk->data);
                 rx_payload = _owr_media_session_get_receive_payload(media_session, pt);
                 if (rx_payload)
