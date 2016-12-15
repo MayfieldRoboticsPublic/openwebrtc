@@ -54,7 +54,7 @@ GST_DEBUG_CATEGORY_EXTERN(_owraudiorenderer_debug);
 
 #define AUDIO_SINK "openslessink"
 
-#elif __linux__
+#elif defined(HAVE_PULSE)
 #include <pulse/pulseaudio.h>
 
 #define AUDIO_SINK  "pulsesink"
@@ -123,9 +123,12 @@ OwrAudioRenderer *owr_audio_renderer_new(void)
 static void
 setup_sink_for_aec(GstElement *sink)
 {
-#if defined(__linux__) && !defined(__ANDROID__)
+#if defined(HAVE_PULSE)
     /* pulsesink */
     GstStructure *s;
+
+    if (g_strcmp0(GST_OBJECT_NAME(gst_element_get_factory(sink)), "pulsesink") != 0)
+        return;
 
     s = gst_structure_new("props", PA_PROP_FILTER_WANT, G_TYPE_STRING, "echo-cancel", NULL);
     g_object_set(G_OBJECT(sink), "stream-properties", s, NULL);
@@ -133,9 +136,14 @@ setup_sink_for_aec(GstElement *sink)
 
 #elif defined(__ANDROID__)
     /* openslessink */
+    OWR_UNUSED(sink);
 
 #elif defined(__APPLE__) && !TARGET_IPHONE_SIMULATOR
     /* osxaudiosink */
+    OWR_UNUSED(sink);
+
+#else
+    OWR_UNUSED(sink);
 
 #endif
 }

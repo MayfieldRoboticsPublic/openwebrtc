@@ -176,9 +176,13 @@ case "$host_os" in
     OWR_DEVICE_LIST_EXT_LIBS=""
     ;;
   linux*)
-    PKG_CHECK_MODULES(PULSE, [libpulse libpulse-mainloop-glib])
-    OWR_DEVICE_LIST_EXT_CFLAGS="\$(PULSE_CFLAGS)"
-    OWR_DEVICE_LIST_EXT_LIBS="\$(PULSE_LIBS)"
+    PKG_CHECK_MODULES(PULSE, [libpulse libpulse-mainloop-glib],
+      [ AC_DEFINE(HAVE_PULSE, 1,
+          [Whether pulseaudio is available])
+        OWR_DEVICE_LIST_EXT_CFLAGS="\$(PULSE_CFLAGS)"
+        OWR_DEVICE_LIST_EXT_LIBS="\$(PULSE_LIBS)"
+      ],
+      [true])
     ;;
 esac
 AM_CONDITIONAL(TARGET_APPLE, test x$is_apple = xyes)

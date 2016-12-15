@@ -66,9 +66,12 @@ GST_DEBUG_CATEGORY_EXTERN(_owrlocalmediasource_debug);
 #define VIDEO_SRC "androidvideosource"
 
 #elif defined(__linux__)
+#if defined(HAVE_PULSE)
 #include <pulse/pulseaudio.h>
-
 #define AUDIO_SRC  "pulsesrc"
+#else
+#define AUDIO_SRC  "audiotestsrc"
+#endif
 #define VIDEO_SRC  "v4l2src"
 
 #else
@@ -107,6 +110,8 @@ struct _OwrLocalMediaSourcePrivate {
     /* Volume and mute are for before source_volume gets created */
     double volume;
     gboolean mute;
+    /* Device from device monitor */
+    GstDevice *device;
 };
 
 static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_source, GstCaps *caps);
@@ -132,6 +137,9 @@ static void owr_local_media_source_finalize(GObject *object)
     source->priv->message_origin_bus_set = NULL;
 
     g_clear_object(&source->priv->source_volume);
+
+    if (source->priv->device != NULL)
+        gst_object_unref(source->priv->device);
 }
 
 static void owr_local_media_source_class_init(OwrLocalMediaSourceClass *klass)
@@ -569,9 +577,12 @@ static void on_caps(GstElement *source, GParamSpec *pspec, OwrMediaSource *media
 static void
 setup_source_for_aec(GstElement *src)
 {
-#if defined(__linux__) && !defined(__ANDROID__)
+#if defined(HAVE_PULSE)
     /* pulsesrc */
     GstStructure *s;
+
+    if (g_strcmp0(GST_OBJECT_NAME(gst_element_get_factory(src)), "pulsesrc") != 0)
+        return;
 
     s = gst_structure_new("props", PA_PROP_FILTER_WANT, G_TYPE_STRING, "echo-cancel", NULL);
     g_object_set(G_OBJECT(src), "stream-properties", s, NULL);
@@ -579,9 +590,14 @@ setup_source_for_aec(GstElement *src)
 
 #elif defined(__ANDROID__)
     /* openslessrc */
+    OWR_UNUSED(src);
 
 #elif defined(__APPLE__) && !TARGET_IPHONE_SIMULATOR
     /* osxaudiosrc */
+    OWR_UNUSED(src);
+
+#else
+    OWR_UNUSED(src);
 
 #endif
 }
@@ -620,9 +636,6 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
     GstElement *source_pipeline;
     GHashTable *event_data;
     GValue *value;
-#if defined(__linux__) && !defined(__ANDROID__)
-    gchar *tmp;
-#endif
 
     g_assert(media_source);
     local_source = OWR_LOCAL_MEDIA_SOURCE(media_source);
@@ -694,7 +707,12 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
             {
             switch (source_type) {
             case OWR_SOURCE_TYPE_CAPTURE:
-                CREATE_ELEMENT(source, AUDIO_SRC, "audio-source");
+                if (local_source->priv->device)
+                    /* source is provided by device monitor */
+                    source = gst_device_create_element(local_source->priv->device, "audio-source");
+                else
+                    CREATE_ELEMENT(source, AUDIO_SRC, "audio-source");
+
 #if !defined(__APPLE__) || !TARGET_IPHONE_SIMULATOR
 /*
     Default values for buffer-time and latency-time on android are 200ms and 20ms.
@@ -709,10 +727,6 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
                 if (priv->device_index > -1) {
 #ifdef __APPLE__
                     g_object_set(source, "device", priv->device_index, NULL);
-#elif defined(__linux__) && !defined(__ANDROID__)
-                    tmp = g_strdup_printf("%d", priv->device_index);
-                    g_object_set(source, "device", tmp, NULL);
-                    g_free(tmp);
 #endif
                 }
 #endif
@@ -744,16 +758,17 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
 
             switch (source_type) {
             case OWR_SOURCE_TYPE_CAPTURE:
-                CREATE_ELEMENT(source, VIDEO_SRC, "video-source");
+                if (local_source->priv->device)
+                    /* source is provided by device monitor */
+                    source = gst_device_create_element(local_source->priv->device, "video-source");
+                else
+                    CREATE_ELEMENT(source, VIDEO_SRC, "video-source");
+
                 if (priv->device_index > -1) {
 #if defined(__APPLE__) && !TARGET_IPHONE_SIMULATOR
                     g_object_set(source, "device-index", priv->device_index, NULL);
 #elif defined(__ANDROID__)
                     g_object_set(source, "cam-index", priv->device_index, NULL);
-#elif defined(__linux__)
-                    tmp = g_strdup_printf("/dev/video%d", priv->device_index);
-                    g_object_set(source, "device", tmp, NULL);
-                    g_free(tmp);
 #endif
                 }
                 break;
@@ -909,7 +924,7 @@ done:
 }
 
 static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type)
+    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device)
 {
     OwrLocalMediaSource *source;
 
@@ -918,6 +933,7 @@ static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const
         "media-type", media_type,
         "device-index", device_index,
         NULL);
+    source->priv->device = device;
 
     _owr_media_source_set_type(OWR_MEDIA_SOURCE(source), source_type);
 
@@ -925,7 +941,7 @@ static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const
 }
 
 OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type)
+    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device)
 {
     static OwrLocalMediaSource *test_sources[2] = { NULL, };
     static GHashTable *sources[2] = { NULL, };
@@ -946,7 +962,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
 
     if (source_type == OWR_SOURCE_TYPE_TEST) {
         if (!test_sources[i])
-            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type);
+            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type, device);
 
         ret = test_sources[i];
 
@@ -966,7 +982,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
         }
 
         if (!ret) {
-            ret = _owr_local_media_source_new(device_index, name, media_type, source_type);
+            ret = _owr_local_media_source_new(device_index, name, media_type, source_type, device);
             g_hash_table_insert(sources[i], GINT_TO_POINTER(device_index), ret);
         }
 
