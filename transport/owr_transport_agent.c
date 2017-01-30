@@ -1598,12 +1598,14 @@ static void link_rtpbin_to_send_output_bin(OwrTransportAgent *transport_agent, g
 static void prepare_transport_bin_send_elements(OwrTransportAgent *transport_agent,
     guint session_id, guint stream_id, gboolean rtcp_mux, PendingSessionInfo *pending_session_info)
 {
-    GstElement *nice_element, *dtls_srtp_bin_rtp, *dtls_srtp_bin_rtcp = NULL;
+    GstElement *nice_element, *dtls_srtp_bin_rtp = NULL;
+    GstElement *dtls_srtp_bin_rtcp = NULL;
     GstElement *scream_queue = NULL;
     gboolean linked_ok, synced_ok;
     GstElement *send_output_bin = NULL;
     SendBinInfo *send_bin_info;
-    gchar *bin_name, *dtls_srtp_pad_name, *queue_name;
+    gchar *bin_name, *queue_name;
+    gchar *dtls_srtp_pad_name = NULL;
     OwrMediaSession *media_session;
     AgentAndSessionIdPair *agent_and_session_id_pair;
 
