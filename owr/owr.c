@@ -127,7 +127,9 @@ GST_PLUGIN_STATIC_DECLARE(osxaudio);
 GST_PLUGIN_STATIC_DECLARE(androidvideosource);
 GST_PLUGIN_STATIC_DECLARE(opensles);
 #elif defined(__linux__)
+#if defined(HAVE_PULSE)
 GST_PLUGIN_STATIC_DECLARE(pulseaudio);
+#endif
 GST_PLUGIN_STATIC_DECLARE(video4linux2);
 #endif
 
@@ -301,7 +303,9 @@ void owr_init(GMainContext *main_context)
     GST_PLUGIN_STATIC_REGISTER(androidvideosource);
     GST_PLUGIN_STATIC_REGISTER(opensles);
 #elif defined(__linux__)
+#if defined(HAVE_PULSE)
     GST_PLUGIN_STATIC_REGISTER(pulseaudio);
+#endif
     GST_PLUGIN_STATIC_REGISTER(video4linux2);
 #endif
 #if defined(__APPLE__) && TARGET_OS_IPHONE && !TARGET_IPHONE_SIMULATOR

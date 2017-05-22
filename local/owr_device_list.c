@@ -72,29 +72,6 @@ typedef struct {
     GList *list;
 } CallbackAndList;
 
-#if defined(__linux__) && !defined(__ANDROID__)
-static gboolean cb_call_closure_with_list_later(CallbackAndList *cal)
-{
-    _owr_utils_call_closure_with_list(cal->callback, cal->list);
-    g_list_free_full(cal->list, g_object_unref);
-
-    g_slice_free(CallbackAndList, cal);
-
-    return FALSE;
-}
-
-static void call_closure_with_list_later(GClosure *callback, GList *list)
-{
-    CallbackAndList *cal;
-
-    cal = g_slice_new0(CallbackAndList);
-    cal->callback = callback;
-    cal->list = list;
-
-    _owr_schedule_with_user_data((GSourceFunc) cb_call_closure_with_list_later, cal);
-}
-#endif
-
 void _owr_get_capture_devices(OwrMediaType types, GClosure *callback)
 {
     GClosure *merger;
@@ -145,136 +122,6 @@ static gboolean enumerate_audio_source_devices(GClosure *callback)
 
 
 
-#if defined(__linux__) && !defined(__ANDROID__)
-
-#include <pulse/glib-mainloop.h>
-#include <pulse/pulseaudio.h>
-
-typedef struct {
-    GClosure *callback;
-    GList *list;
-    pa_glib_mainloop *mainloop;
-    pa_context *pa_context;
-    gboolean it_sources;
-} AudioListContext;
-
-static void on_pulse_context_state_change(pa_context *, AudioListContext *);
-static void source_info_iterator(pa_context *, const pa_source_info *, int eol, AudioListContext *);
-
-static gboolean free_pa_context(AudioListContext *context)
-{
-    pa_context_disconnect(context->pa_context);
-    pa_context_unref(context->pa_context);
-
-    pa_glib_mainloop_free(context->mainloop);
-
-    g_slice_free(AudioListContext, context);
-
-    return FALSE;
-}
-
-static void finish_pa_list(AudioListContext *context)
-{
-    /* Schedule the callback in Owr mainloop context */
-    call_closure_with_list_later(context->callback, context->list);
-
-    /* Also schedule freeing of PA resources */
-    _owr_schedule_with_user_data((GSourceFunc) free_pa_context, context);
-}
-
-static gboolean enumerate_audio_source_devices(GClosure *callback)
-{
-    AudioListContext *context;
-
-    context = g_slice_new0(AudioListContext);
-
-    context->callback = callback;
-
-    context->mainloop = pa_glib_mainloop_new(_owr_get_main_context());
-
-    if (!context->mainloop) {
-        g_warning("PulseAudio: failed to create glib mainloop");
-        goto cleanup;
-    }
-
-    context->pa_context = pa_context_new(pa_glib_mainloop_get_api(context->mainloop), "Owr");
-
-    if (!context->pa_context) {
-        g_warning("PulseAudio: failed to create context");
-        goto cleanup_mainloop;
-    }
-
-    pa_context_set_state_callback(context->pa_context,
-        (pa_context_notify_cb_t) on_pulse_context_state_change, context);
-    pa_context_connect(context->pa_context, NULL, 0, NULL);
-
-done:
-    return FALSE;
-
-cleanup_mainloop:
-    pa_glib_mainloop_free(context->mainloop);
-
-cleanup:
-    finish_pa_list(context);
-
-    goto done;
-}
-
-static void on_pulse_context_state_change(pa_context *pa_context, AudioListContext *context)
-{
-    gint error;
-    error = pa_context_errno(pa_context);
-    if (error)
-        g_warning("PulseAudio: error: %s", pa_strerror(error));
-    switch (pa_context_get_state(pa_context)) {
-    case PA_CONTEXT_READY:
-        pa_context_get_source_info_list(pa_context, (pa_source_info_cb_t) source_info_iterator, context);
-        break;
-    case PA_CONTEXT_FAILED:
-        g_warning("PulseAudio: failed to connect to daemon");
-        finish_pa_list(context);
-        break;
-    case PA_CONTEXT_TERMINATED:
-        break;
-    case PA_CONTEXT_UNCONNECTED:
-        break;
-    case PA_CONTEXT_CONNECTING:
-        break;
-    case PA_CONTEXT_AUTHORIZING:
-        break;
-    case PA_CONTEXT_SETTING_NAME:
-        break;
-    default:
-        break;
-    }
-}
-
-static void source_info_iterator(pa_context *pa_context, const pa_source_info *info, int eol, AudioListContext *context)
-{
-    OWR_UNUSED(pa_context);
-
-    if (!eol) {
-        OwrLocalMediaSource *source;
-
-        if (info->monitor_of_sink_name) {
-            /* We don't want to list monitor sources */
-            return;
-        }
-
-        source = _owr_local_media_source_new_cached(info->index, info->description,
-            OWR_MEDIA_TYPE_AUDIO, OWR_SOURCE_TYPE_CAPTURE);
-
-        context->list = g_list_prepend(context->list, source);
-    } else {
-        context->list = g_list_reverse(context->list);
-        finish_pa_list(context);
-    }
-}
-
-#endif /* defined(__linux__) && !defined(__ANDROID__) */
-
-
-
 #if defined(__ANDROID__)
 
 static gboolean enumerate_audio_source_devices(GClosure *callback)
@@ -283,7 +130,8 @@ static gboolean enumerate_audio_source_devices(GClosure *callback)
     GList *sources = NULL;
 
     source = _owr_local_media_source_new_cached(-1,
-        "Default audio input", OWR_MEDIA_TYPE_AUDIO, OWR_SOURCE_TYPE_CAPTURE);
+        "Default audio input", OWR_MEDIA_TYPE_AUDIO, OWR_SOURCE_TYPE_CAPTURE,
+        NULL);
     sources = g_list_prepend(sources, source);
     _owr_utils_call_closure_with_list(callback, sources);
     g_list_free_full(sources, g_object_unref);
@@ -297,103 +145,60 @@ static gboolean enumerate_audio_source_devices(GClosure *callback)
 
 #if (defined(__linux__) && !defined(__ANDROID__))
 
-static gchar *get_v4l2_device_name(gchar *filename)
-{
-    gchar *device_name;
-    int fd = 0;
-    struct v4l2_capability vcap;
-
-    fd = open(filename, O_RDWR);
-
-    if (fd <= 0) {
-        g_warning("v4l: failed to open %s", filename);
-
-        device_name = g_strdup(filename);
-
-        return NULL;
-    }
-
-    if (ioctl(fd, VIDIOC_QUERYCAP, &vcap) < 0) {
-        g_warning("v4l: failed to query %s", filename);
-
-        device_name = g_strdup(filename);
-    } else
-        device_name = g_strdup((const gchar *)vcap.card);
-
-    g_debug("v4l: found device: %s", device_name);
-
-    close(fd);
-
-    return device_name;
-}
-
-static OwrLocalMediaSource *maybe_create_source_from_filename(const gchar *name)
-{
-    static GRegex *regex;
-    GMatchInfo *match_info = NULL;
-    OwrLocalMediaSource *source = NULL;
-    gchar *index_str;
-    gint index;
-    gchar *filename;
-    gchar *device_name;
-
-    if (g_once_init_enter(&regex)) {
-        GRegex *r;
-        r = g_regex_new("^video(0|[1-9][0-9]*)$", G_REGEX_OPTIMIZE, 0, NULL);
-        g_assert(r);
-        g_once_init_leave(&regex, r);
-    }
-
-    if (g_regex_match(regex, name, 0, &match_info)) {
-        index_str = g_match_info_fetch(match_info, 1);
-        index = g_ascii_strtoll(index_str, NULL, 10);
-        g_free(index_str);
-
-        filename = g_strdup_printf("/dev/%s", name);
-        device_name = get_v4l2_device_name(filename);
-        g_free(filename);
-        filename = NULL;
-
-        if (!device_name)
-            return NULL;
-
-        source = _owr_local_media_source_new_cached(index, device_name,
-            OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE);
-
-        g_debug("v4l: filename match: %s", device_name);
-
-        g_free(device_name);
-    }
-
-    g_match_info_free(match_info);
-
-    return source;
-}
-
-static gboolean enumerate_video_source_devices(GClosure *callback)
+static gboolean enumerate_source_devices(OwrMediaType type, GClosure *callback)
 {
     OwrLocalMediaSource *source;
     GList *sources = NULL;
-    GError *error = NULL;
-    GDir *dev_dir;
-    const gchar *filename;
+    GstDeviceMonitor *monitor;
+    GstCaps *caps;
+    GList *list, *l;
+    const gchar *klass;
 
-    dev_dir = g_dir_open("/dev", 0, &error);
+    if (type == OWR_MEDIA_TYPE_AUDIO)
+        klass = "Source/Audio";
+    else if (type == OWR_MEDIA_TYPE_VIDEO)
+        klass = "Source/Video";
+    else
+        g_assert_not_reached();
 
-    while ((filename = g_dir_read_name(dev_dir))) {
-        source = maybe_create_source_from_filename(filename);
+    monitor = gst_device_monitor_new();
+    caps = gst_caps_new_any();
 
-        if (source)
-            sources = g_list_prepend(sources, source);
+    gst_device_monitor_add_filter(monitor, klass, caps);
+    gst_caps_unref(caps);
+
+    list = gst_device_monitor_get_devices(monitor);
+
+    for (l = list; l; l = l->next) {
+        GstDevice *device = GST_DEVICE(l->data);
+
+        gchar *name = gst_device_get_display_name(device);
+
+        source = _owr_local_media_source_new_cached(-1,
+                name, type,
+                OWR_SOURCE_TYPE_CAPTURE,
+                device);
+        g_free(name);
+        sources = g_list_prepend(sources, source);
     }
 
-    g_dir_close(dev_dir);
+    g_list_free(list);
+    g_object_unref(monitor);
 
-    sources = g_list_reverse(sources);
     _owr_utils_call_closure_with_list(callback, sources);
     g_list_free_full(sources, g_object_unref);
 
     return FALSE;
+}
+
+static gboolean enumerate_audio_source_devices(GClosure *callback)
+{
+    return enumerate_source_devices(OWR_MEDIA_TYPE_AUDIO, callback);
+}
+
+static gboolean enumerate_video_source_devices(GClosure *callback)
+{
+    return enumerate_source_devices(OWR_MEDIA_TYPE_VIDEO, callback);
 }
 
 #endif /*(defined(__linux__) && !defined(__ANDROID__))*/
@@ -681,11 +486,11 @@ static gboolean enumerate_video_source_devices(GClosure *callback)
 
         if (facing == CameraInfo.CAMERA_FACING_FRONT) {
             source = _owr_local_media_source_new_cached(i, "Front facing Camera",
-                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE);
+                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE, NULL);
             sources = g_list_prepend(sources, source);
         } else if (facing == CameraInfo.CAMERA_FACING_BACK) {
             source = _owr_local_media_source_new_cached(i, "Back facing Camera",
-                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE);
+                OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE, NULL);
             sources = g_list_append(sources, source);
         }
 

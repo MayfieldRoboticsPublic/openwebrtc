@@ -54,7 +54,8 @@ GST_DEBUG_CATEGORY_EXTERN(_owraudiorenderer_debug);
 
 #define AUDIO_SINK "openslessink"
 
-#elif __linux__
+#elif defined(HAVE_PULSE)
+#include <pulse/pulseaudio.h>
 
 #define AUDIO_SINK  "pulsesink"
 
@@ -119,6 +120,35 @@ OwrAudioRenderer *owr_audio_renderer_new(void)
         NULL);
 }
 
+static void
+setup_sink_for_aec(GstElement *sink)
+{
+#if defined(HAVE_PULSE)
+    /* pulsesink */
+    GstStructure *s;
+
+    if (g_strcmp0(GST_OBJECT_NAME(gst_element_get_factory(sink)), "pulsesink") != 0)
+        return;
+
+    s = gst_structure_new("props", PA_PROP_FILTER_WANT, G_TYPE_STRING, "echo-cancel", NULL);
+    g_object_set(G_OBJECT(sink), "stream-properties", s, NULL);
+    gst_structure_free(s);
+
+#elif defined(__ANDROID__)
+    /* openslessink */
+    OWR_UNUSED(sink);
+
+#elif defined(__APPLE__) && !TARGET_IPHONE_SIMULATOR
+    /* osxaudiosink */
+    OWR_UNUSED(sink);
+
+#else
+    OWR_UNUSED(sink);
+
+#endif
+}
+
+
 #define LINK_ELEMENTS(a, b) \
     if (!gst_element_link(a, b)) \
         GST_ERROR("Failed to link " #a " -> " #b);
@@ -150,6 +180,11 @@ static GstElement *owr_audio_renderer_get_element(OwrMediaRenderer *renderer)
 
     sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
     g_assert(sink);
+
+    g_object_set(sink, "buffer-time", SINK_BUFFER_TIME,
+        "latency-time", G_GINT64_CONSTANT(10000), NULL);
+
+    setup_sink_for_aec(sink);
 
     gst_bin_add_many(GST_BIN(renderer_bin), audioresample, audioconvert, capsfilter,
         volume, sink, NULL);
