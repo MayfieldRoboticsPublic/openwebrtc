@@ -571,7 +571,9 @@ static void on_caps(GstElement *source, GParamSpec *pspec, OwrMediaSource *media
     if (GST_IS_CAPS(caps)) {
         GST_INFO_OBJECT(source, "%s - configured with caps: %" GST_PTR_FORMAT,
             media_source_name, caps);
+        gst_caps_unref(caps);
     }
+    g_free(media_source_name);
 }
 
 static void
@@ -773,8 +775,14 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
                 }
                 break;
             case OWR_SOURCE_TYPE_TEST: {
-                GstElement *src, *time;
+                GstElement *src, *time, *h264enc = NULL;
                 GstPad *srcpad;
+                gboolean useh264 = g_ascii_strcasecmp (g_getenv("OWR_USE_TEST_SOURCES"),"H264") == 0;
+
+                if (useh264)
+                    printf("video-source encoding: video/x-h264\n");
+                else
+                    printf("video-source encoding: video/x-raw\n");
 
                 source = gst_bin_new("video-source");
 
@@ -787,9 +795,24 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
                     g_object_set(time, "font-desc", "Sans 60", NULL);
                     gst_bin_add(GST_BIN(source), time);
                     gst_element_link(src, time);
-                    srcpad = gst_element_get_static_pad(time, "src");
-                } else
-                    srcpad = gst_element_get_static_pad(src, "src");
+                    if (!useh264)
+                        srcpad = gst_element_get_static_pad(time, "src");
+                } else if (!useh264)
+                        srcpad = gst_element_get_static_pad(src, "src");
+
+                if (useh264) {
+                    h264enc = gst_element_factory_make("openh264enc", "openh264enc");
+                    if (!h264enc) {
+                        GST_ERROR_OBJECT(source, "Failed to create openh264enc element!");
+                        printf("Failed to create openh264enc element!\n");
+                    }
+                    gst_bin_add(GST_BIN(source), h264enc);
+                    if (time)
+                        gst_element_link(time, h264enc);
+                    else
+                        gst_element_link(src, h264enc);
+                    srcpad = gst_element_get_static_pad(h264enc, "src");
+                }
 
                 gst_element_add_pad(source, gst_ghost_pad_new("src", srcpad));
                 gst_object_unref(srcpad);
@@ -924,7 +947,8 @@ done:
 }
 
 static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device)
+    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device,
+    OwrMediaSourceSupportedInterfaces interfaces)
 {
     OwrLocalMediaSource *source;
 
@@ -936,12 +960,14 @@ static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const
     source->priv->device = device;
 
     _owr_media_source_set_type(OWR_MEDIA_SOURCE(source), source_type);
+    _owr_media_source_set_supported_interfaces(OWR_MEDIA_SOURCE(source), interfaces);
 
     return source;
 }
 
 OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device)
+    OwrMediaType media_type, OwrSourceType source_type, GstDevice *device,
+    OwrMediaSourceSupportedInterfaces interfaces)
 {
     static OwrLocalMediaSource *test_sources[2] = { NULL, };
     static GHashTable *sources[2] = { NULL, };
@@ -962,7 +988,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
 
     if (source_type == OWR_SOURCE_TYPE_TEST) {
         if (!test_sources[i])
-            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type, device);
+            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type, device, interfaces);
 
         ret = test_sources[i];
 
@@ -982,7 +1008,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
         }
 
         if (!ret) {
-            ret = _owr_local_media_source_new(device_index, name, media_type, source_type, device);
+            ret = _owr_local_media_source_new(device_index, name, media_type, source_type, device, interfaces);
             g_hash_table_insert(sources[i], GINT_TO_POINTER(device_index), ret);
         }
 
