@@ -4524,7 +4524,6 @@ void owr_transport_agent_start(OwrTransportAgent *agent)
         g_object_ref(agent);
 
         add_session(args);
-        g_hash_table_unref(args);
     }
     g_slist_free_full(agent->priv->unstarted_sessions, g_object_unref);
     agent->priv->unstarted_sessions = NULL;
